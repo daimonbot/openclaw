@@ -430,9 +430,17 @@ export async function runCronIsolatedAgentTurn(params: {
   if (payloadModelApplied) {
     cronSession.sessionEntry.modelOverride = model;
     cronSession.sessionEntry.providerOverride = provider;
+    cronSession.sessionEntry.cronModelOverrideActive = true;
   } else {
-    delete cronSession.sessionEntry.modelOverride;
-    delete cronSession.sessionEntry.providerOverride;
+    // Only clear modelOverride/providerOverride if they were written by a prior
+    // cron payload.model (cronModelOverrideActive === true). If the user set
+    // the model via a /model command (cronModelOverrideActive absent/false),
+    // preserve those overrides so user preferences survive cron runs.
+    if (cronSession.sessionEntry.cronModelOverrideActive === true) {
+      delete cronSession.sessionEntry.modelOverride;
+      delete cronSession.sessionEntry.providerOverride;
+    }
+    delete cronSession.sessionEntry.cronModelOverrideActive;
   }
   try {
     await persistSessionEntry();

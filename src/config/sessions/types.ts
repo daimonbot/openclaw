@@ -105,6 +105,7 @@ export type SessionEntry = {
   responseUsage?: "on" | "off" | "tokens" | "full";
   providerOverride?: string;
   modelOverride?: string;
+  cronModelOverrideActive?: boolean;
   authProfileOverride?: string;
   authProfileOverrideSource?: "auto" | "user";
   authProfileOverrideCompactionCount?: number;

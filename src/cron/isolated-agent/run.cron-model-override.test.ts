@@ -293,10 +293,12 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
       payload: { kind: "agentTurn", message: "run daily digest" },
     });
 
-    // Simulate a session entry that previously had a cron-set model override.
+    // Simulate a session entry that previously had a cron-set model override
+    // (cronModelOverrideActive=true marks it as cron-originated).
     cronSession.sessionEntry = makeFreshSessionEntry({
       modelOverride: "anthropic/claude-haiku-4-5",
       providerOverride: "anthropic",
+      cronModelOverrideActive: true,
     });
     resolveCronSessionMock.mockReturnValue(cronSession);
 
@@ -304,9 +306,84 @@ describe("runCronIsolatedAgentTurn — cron model override (#21057)", () => {
 
     await runCronIsolatedAgentTurn(makeParams({ job: jobWithoutModel }));
 
-    // Stale overrides must be cleared, not left carrying the old model.
+    // Stale cron overrides must be cleared, not left carrying the old model.
     expect(cronSession.sessionEntry.modelOverride).toBeUndefined();
     expect(cronSession.sessionEntry.providerOverride).toBeUndefined();
+    expect(cronSession.sessionEntry.cronModelOverrideActive).toBeUndefined();
+  });
+
+  it("payload.model soft-rejected — does NOT clear user-set modelOverride", async () => {
+    // When resolveAllowedModelRef soft-rejects (logs warning, falls back to
+    // default), payloadModelApplied stays false. The else-branch must NOT clear
+    // modelOverride/providerOverride when cronModelOverrideActive is absent —
+    // those fields were set by the user via /model and must be preserved.
+    resolveAllowedModelRefMock.mockReturnValueOnce({
+      error: "model not allowed: anthropic/claude-sonnet-4-6",
+    });
+
+    // User previously set a /model override; NO cronModelOverrideActive flag.
+    cronSession.sessionEntry = makeFreshSessionEntry({
+      modelOverride: "claude-haiku-4-5",
+      providerOverride: "anthropic",
+      // cronModelOverrideActive intentionally absent
+    });
+    resolveCronSessionMock.mockReturnValue(cronSession);
+
+    runWithModelFallbackMock.mockResolvedValueOnce(makeSuccessfulRunResult());
+
+    await runCronIsolatedAgentTurn(makeParams());
+
+    // User /model override must survive the soft-rejected cron payload.
+    expect(cronSession.sessionEntry.modelOverride).toBe("claude-haiku-4-5");
+    expect(cronSession.sessionEntry.providerOverride).toBe("anthropic");
+  });
+
+  it("payload.model absent — clears stale cron-set modelOverride (cronModelOverrideActive=true)", async () => {
+    // When payload.model is removed from the job config, any stale cron-set
+    // overrides (marked with cronModelOverrideActive=true) must be cleared so
+    // subsequent turns revert to the agent's configured default.
+    const jobWithoutModel = makeJob({
+      payload: { kind: "agentTurn", message: "run daily digest" },
+    });
+
+    cronSession.sessionEntry = makeFreshSessionEntry({
+      modelOverride: "claude-haiku-4-5",
+      providerOverride: "anthropic",
+      cronModelOverrideActive: true,
+    });
+    resolveCronSessionMock.mockReturnValue(cronSession);
+
+    runWithModelFallbackMock.mockResolvedValueOnce(makeSuccessfulRunResult());
+
+    await runCronIsolatedAgentTurn(makeParams({ job: jobWithoutModel }));
+
+    expect(cronSession.sessionEntry.modelOverride).toBeUndefined();
+    expect(cronSession.sessionEntry.providerOverride).toBeUndefined();
+    expect(cronSession.sessionEntry.cronModelOverrideActive).toBeUndefined();
+  });
+
+  it("payload.model absent — preserves user /model override (cronModelOverrideActive absent)", async () => {
+    // When payload.model is absent and the session entry has modelOverride set by
+    // the user (no cronModelOverrideActive flag), the overrides must not be touched.
+    const jobWithoutModel = makeJob({
+      payload: { kind: "agentTurn", message: "run daily digest" },
+    });
+
+    cronSession.sessionEntry = makeFreshSessionEntry({
+      modelOverride: "claude-haiku-4-5",
+      providerOverride: "anthropic",
+      // cronModelOverrideActive intentionally absent — user-set override
+    });
+    resolveCronSessionMock.mockReturnValue(cronSession);
+
+    runWithModelFallbackMock.mockResolvedValueOnce(makeSuccessfulRunResult());
+
+    await runCronIsolatedAgentTurn(makeParams({ job: jobWithoutModel }));
+
+    // User-set overrides must survive a cron run with no payload.model.
+    expect(cronSession.sessionEntry.modelOverride).toBe("claude-haiku-4-5");
+    expect(cronSession.sessionEntry.providerOverride).toBe("anthropic");
+    expect(cronSession.sessionEntry.cronModelOverrideActive).toBeUndefined();
   });
 
   it("does NOT set modelOverride/providerOverride when payload.model is soft-rejected (#17451)", async () => {
